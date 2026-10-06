@@ -5,8 +5,8 @@ import json
 import logging
 import re
 
-from curl_cffi import requests as curl_requests
 from bs4 import BeautifulSoup
+from curl_cffi import requests as curl_requests
 
 from .constants import HEMNET_URLS, HemnetItemType
 
@@ -169,16 +169,15 @@ class HemnetScraper:
             summary = json_data["props"]["pageProps"]["__APOLLO_STATE__"]["ROOT_QUERY"]
 
             # Find listing data
-            listing_data = next(
-                (
-                    v
-                    for k, v in summary.items()
-                    if k.startswith("searchForSaleListings")
-                ),
-                None,
-            )
+            search_data = summary.get("search")
+            listing_data = None
+            if isinstance(search_data, dict):
+                listing_data = next(
+                    (v for k, v in search_data.items() if k.startswith("listings(")),
+                    None,
+                )
             if listing_data is None or "total" not in listing_data:
-                raise ValueError("Missing searchForSaleListings data")
+                raise ValueError("Missing search.listings data")
 
             # Find sold data
             sold_data = next(

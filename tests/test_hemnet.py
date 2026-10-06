@@ -1,9 +1,10 @@
 """Tests for Hemnet scraper"""
 
 from unittest.mock import patch
+
 import pytest
 
-from pyhemnet import HemnetScraper, HemnetItemType
+from pyhemnet import HemnetItemType, HemnetScraper
 
 
 @pytest.fixture
@@ -20,8 +21,10 @@ def mock_summary_json():
             "pageProps": {
                 "__APOLLO_STATE__": {
                     "ROOT_QUERY": {
-                        "searchForSaleListings({})": {
-                            "total": 150,
+                        "search": {
+                            "listings({})": {
+                                "total": 150,
+                            },
                         },
                         "searchSales({})": {
                             "total": 75,
@@ -190,5 +193,5 @@ class TestHemnetScraper:
             "props": {"pageProps": {"__APOLLO_STATE__": {"ROOT_QUERY": {}}}}
         }
 
-        with pytest.raises(ValueError, match="Missing searchForSaleListings data"):
+        with pytest.raises(ValueError, match="Missing search.listings data"):
             scraper.get_summary()
