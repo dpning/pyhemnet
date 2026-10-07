@@ -1,6 +1,6 @@
 # PyHemnet
 
-[![PyPI version](https://badge.fury.io/py/pyhemnet.svg)](https://pypi.org/project/pyhemnet/)
+[![PyPI version](https://img.shields.io/pypi/v/pyhemnet)](https://pypi.org/project/pyhemnet/)
 [![Python versions](https://img.shields.io/pypi/pyversions/pyhemnet.svg)](https://pypi.org/project/pyhemnet/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Downloads](https://static.pepy.tech/badge/pyhemnet/month)](https://pepy.tech/project/pyhemnet)
