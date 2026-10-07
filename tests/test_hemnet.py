@@ -22,7 +22,10 @@ def mock_summary_json():
                 "__APOLLO_STATE__": {
                     "ROOT_QUERY": {
                         "search": {
-                            "listings({})": {
+                            'listings({"search":{"upcoming":"ONLY"}})': {
+                                "total": 25,
+                            },
+                            'listings({"search":{"upcoming":"INCLUDE"}})': {
                                 "total": 150,
                             },
                         },
