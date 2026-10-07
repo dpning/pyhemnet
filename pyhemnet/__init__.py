@@ -1,6 +1,6 @@
 """Swedish Real Estate Scraper - Scrape data from Hemnet.se"""
 
-__version__ = "1.0.1"
+__version__ = "1.0.2"
 __author__ = "ningdp2012"
 
 # Import scraper classes
