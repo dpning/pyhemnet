@@ -173,7 +173,15 @@ class HemnetScraper:
             listing_data = None
             if isinstance(search_data, dict):
                 listing_data = next(
-                    (v for k, v in search_data.items() if k.startswith("listings(")),
+                    (
+                        v
+                        for k, v in search_data.items()
+                        if k.startswith("listings(")
+                        and json.loads(k[len("listings(") : -1])
+                        .get("search", {})
+                        .get("upcoming")
+                        != "ONLY"
+                    ),
                     None,
                 )
             if listing_data is None or "total" not in listing_data:
