@@ -93,16 +93,16 @@ class HemnetScraper:
         return base_url
 
     def _make_request(self, url: str) -> dict:
-        """Fetch and parse JSON data from Hemnet page (internal)
+        """Fetch and parse data from a Hemnet page (internal)
 
         Args:
             url: URL to scrape
 
         Returns:
-            Parsed JSON data from page
+            Parsed page data
 
         Raises:
-            ValueError: If JSON data cannot be found or parsed
+            ValueError: If page data cannot be found or parsed
         """
         response = self.scraper.get(url)
         response.raise_for_status()
@@ -110,30 +110,73 @@ class HemnetScraper:
         soup = BeautifulSoup(response.text, "html.parser")
         script_tag = soup.find("script", id="__NEXT_DATA__")
 
-        if not script_tag or not script_tag.string:
-            heading = soup.find("h1")
-            heading_text = heading.get_text(" ", strip=True) if heading else ""
-            match = re.match(
-                r"([\d][\d\s.,\u00a0\u202f]*)\s+(bostäder till salu|sålda bostäder)\b",
-                heading_text,
-                re.IGNORECASE,
-            )
-            if match:
-                page_type = (
-                    "listings"
-                    if match.group(2).lower() == "bostäder till salu"
-                    else "sold"
-                )
-                return {
-                    "__hemnet_page_type__": page_type,
-                    "__hemnet_page_total__": self._extract_int(match.group(1)),
-                }
-            raise ValueError(f"Could not find JSON data in page: {url}")
+        if script_tag and script_tag.string:
+            try:
+                return json.loads(script_tag.string)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Failed to parse JSON data from {url}: {e}")
 
-        try:
-            return json.loads(script_tag.string)
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Failed to parse JSON data from {url}: {e}")
+        page_data = self._extract_rendered_page_data(soup)
+        if page_data is not None:
+            return page_data
+
+        heading = soup.find("h1")
+        heading_text = heading.get_text(" ", strip=True) if heading else ""
+        match = re.match(
+            r"([\d][\d\s.,\u00a0\u202f]*)\s+(bostäder till salu|sålda bostäder)\b",
+            heading_text,
+            re.IGNORECASE,
+        )
+        if match:
+            page_type = (
+                "listings" if match.group(2).lower() == "bostäder till salu" else "sold"
+            )
+            return {
+                "__hemnet_page_type__": page_type,
+                "__hemnet_page_total__": self._extract_int(match.group(1)),
+            }
+        raise ValueError(f"Could not find page data in page: {url}")
+
+    @staticmethod
+    def _extract_rendered_page_data(soup: BeautifulSoup) -> dict | None:
+        """Extract search results embedded in a Next.js Flight page."""
+        decoder = json.JSONDecoder()
+        flight_chunks = []
+
+        for script_tag in soup.find_all("script"):
+            script_text = script_tag.string or script_tag.get_text()
+            for match in re.finditer(r"self\.__next_f\.push\(\[1,", script_text):
+                try:
+                    chunk, _ = decoder.raw_decode(script_text, match.end())
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(chunk, str):
+                    flight_chunks.append(chunk)
+
+        markers = (
+            ("saveSearchTrackingResult", "listings", "ListingResultsCombined"),
+            ("searchResult", "sold", "SoldListingResults"),
+        )
+        for flight_chunk in flight_chunks:
+            for key, page_type, typename in markers:
+                marker = re.compile(rf'"{re.escape(key)}"\s*:\s*')
+                for match in marker.finditer(flight_chunk):
+                    try:
+                        result, _ = decoder.raw_decode(flight_chunk, match.end())
+                    except json.JSONDecodeError:
+                        continue
+                    if (
+                        isinstance(result, dict)
+                        and result.get("__typename") == typename
+                        and isinstance(result.get("total"), (int, float))
+                        and isinstance(result.get("cards"), list)
+                    ):
+                        return {
+                            "__hemnet_page_type__": page_type,
+                            "__hemnet_page_total__": int(result["total"]),
+                            "__hemnet_cards__": result["cards"],
+                        }
+        return None
 
     @staticmethod
     def _extract_int(value: str | None, default: int = 0) -> int:
@@ -235,22 +278,30 @@ class HemnetScraper:
         Raises:
             ValueError: If required data structure is missing or invalid
         """
-        try:
-            details = json_data["props"]["pageProps"]["__APOLLO_STATE__"]
-        except (KeyError, TypeError) as e:
-            raise ValueError(f"Invalid JSON structure for details: {e}")
+        if "__hemnet_page_type__" in json_data:
+            if json_data["__hemnet_page_type__"] != "listings":
+                raise ValueError("Unexpected page type while parsing listings")
+            listing_cards = json_data.get("__hemnet_cards__")
+            if not isinstance(listing_cards, list):
+                raise ValueError("Missing listing cards in rendered page data")
+        else:
+            try:
+                details = json_data["props"]["pageProps"]["__APOLLO_STATE__"]
+            except (KeyError, TypeError) as e:
+                raise ValueError(f"Invalid JSON structure for details: {e}")
 
-        # Use list comprehension instead of dict comprehension + .values()
-        listing_cards = [
-            value
-            for key, value in details.items()
-            if key.startswith("ListingCard:")
-            and isinstance(value, dict)
-            and value.get("__typename") == "ListingCard"
-        ]
+            listing_cards = [
+                value
+                for key, value in details.items()
+                if key.startswith("ListingCard:")
+                and isinstance(value, dict)
+                and value.get("__typename") == "ListingCard"
+            ]
 
         homes = []
         for data in listing_cards:
+            if not isinstance(data, dict) or data.get("__typename") != "ListingCard":
+                continue
             try:
                 homes.append(
                     {
@@ -292,22 +343,30 @@ class HemnetScraper:
         Raises:
             ValueError: If required data structure is missing or invalid
         """
-        try:
-            details = json_data["props"]["pageProps"]["__APOLLO_STATE__"]
-        except (KeyError, TypeError) as e:
-            raise ValueError(f"Invalid JSON structure for details: {e}")
+        if "__hemnet_page_type__" in json_data:
+            if json_data["__hemnet_page_type__"] != "sold":
+                raise ValueError("Unexpected page type while parsing sold homes")
+            sale_cards = json_data.get("__hemnet_cards__")
+            if not isinstance(sale_cards, list):
+                raise ValueError("Missing sold cards in rendered page data")
+        else:
+            try:
+                details = json_data["props"]["pageProps"]["__APOLLO_STATE__"]
+            except (KeyError, TypeError) as e:
+                raise ValueError(f"Invalid JSON structure for details: {e}")
 
-        # Use list comprehension instead of dict comprehension + .values()
-        sale_cards = [
-            value
-            for key, value in details.items()
-            if key.startswith("SaleCard:")
-            and isinstance(value, dict)
-            and value.get("__typename") == "SaleCard"
-        ]
+            sale_cards = [
+                value
+                for key, value in details.items()
+                if key.startswith("SaleCard:")
+                and isinstance(value, dict)
+                and value.get("__typename") == "SaleCard"
+            ]
 
         homes = []
         for data in sale_cards:
+            if not isinstance(data, dict) or data.get("__typename") != "SaleCard":
+                continue
             try:
                 homes.append(
                     {

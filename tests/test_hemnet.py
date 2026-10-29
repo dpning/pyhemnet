@@ -1,5 +1,6 @@
 """Tests for Hemnet scraper"""
 
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -168,6 +169,35 @@ class TestHemnetScraper:
                 "__hemnet_page_total__": total,
             }
 
+    @pytest.mark.parametrize(
+        ("page_type", "result_key", "typename"),
+        [
+            ("listings", "saveSearchTrackingResult", "ListingResultsCombined"),
+            ("sold", "searchResult", "SoldListingResults"),
+        ],
+    )
+    def test_make_request_parses_rendered_search_results(
+        self, scraper, page_type, result_key, typename
+    ):
+        cards = [
+            {"__typename": "ListingCard" if page_type == "listings" else "SaleCard"}
+        ]
+        result = {"__typename": typename, "total": 123, "cards": cards}
+        flight_data = json.dumps({result_key: result})
+        response = MagicMock()
+        response.text = (
+            "<html><script>self.__next_f.push([1,"
+            f"{json.dumps(flight_data)}"
+            "])</script></html>"
+        )
+
+        with patch.object(scraper.scraper, "get", return_value=response):
+            assert scraper._make_request("https://www.hemnet.se/example") == {
+                "__hemnet_page_type__": page_type,
+                "__hemnet_page_total__": 123,
+                "__hemnet_cards__": cards,
+            }
+
     @patch("pyhemnet.hemnet.HemnetScraper._make_request")
     def test_get_summary_with_filters(self, mock_request, scraper, mock_summary_json):
         """Test get_summary with location and item type filters"""
@@ -204,6 +234,40 @@ class TestHemnetScraper:
         assert homes[1]["housing_type"] == "Radhus"
 
     @patch("pyhemnet.hemnet.HemnetScraper._make_request")
+    def test_get_sold_from_rendered_page(self, mock_request, scraper):
+        mock_request.return_value = {
+            "__hemnet_page_type__": "sold",
+            "__hemnet_page_total__": 1,
+            "__hemnet_cards__": [
+                {
+                    "__typename": "SaleCard",
+                    "id": "123",
+                    "listingId": "L123",
+                    "streetAddress": "Test Street 1",
+                    "locationDescription": "Stockholm",
+                    "housingForm": {"name": "Villa"},
+                    "rooms": "5 rum",
+                    "livingArea": "150 m²",
+                    "landArea": "800 m²",
+                    "askingPrice": "5 000 000 kr",
+                    "finalPrice": "5 200 000 kr",
+                    "priceChange": "+200 000 kr",
+                    "soldAt": "1704931200.0",
+                    "brokerAgencyName": "Test Broker",
+                    "labels": [{"text": "Popular"}],
+                }
+            ],
+        }
+
+        homes = scraper.get_sold(location_id="17744")
+
+        assert len(homes) == 1
+        assert homes[0]["address"] == "Test Street 1"
+        assert homes[0]["final_price"] == 5200000
+        assert homes[0]["sold_at"] == "2024-01-11"
+        assert homes[0]["labels"] == ["Popular"]
+
+    @patch("pyhemnet.hemnet.HemnetScraper._make_request")
     def test_get_listings(self, mock_request, scraper, mock_listing_details_json):
         """Test get_listings method returns current property listings"""
         mock_request.return_value = mock_listing_details_json
@@ -217,6 +281,42 @@ class TestHemnetScraper:
         assert listings[0]["new_construction"] is True
         assert listings[0]["description"] == "Beautiful apartment"
         assert listings[0]["published_at"] == "2024-01-09"
+
+    @patch("pyhemnet.hemnet.HemnetScraper._make_request")
+    def test_get_listings_from_rendered_page(self, mock_request, scraper):
+        mock_request.return_value = {
+            "__hemnet_page_type__": "listings",
+            "__hemnet_page_total__": 1,
+            "__hemnet_cards__": [
+                {
+                    "__typename": "ListingCard",
+                    "id": "789",
+                    "streetAddress": "New Street 1",
+                    "locationDescription": "Malmö",
+                    "housingForm": {"name": "Bostadsrätt"},
+                    "rooms": "2 rum",
+                    "livingAndSupplementalAreas": "65 m²",
+                    "landArea": None,
+                    "askingPrice": "2 500 000 kr",
+                    "publishedAt": "1704758400.0",
+                    "removedBeforeShowing": False,
+                    "newConstruction": True,
+                    "brokerName": "John Doe",
+                    "brokerAgencyName": "Premium Broker",
+                    "labels": [{"text": "Nyproduktion"}],
+                    "description": "Beautiful apartment",
+                }
+            ],
+        }
+
+        listings = scraper.get_listings(location_id="17744")
+
+        assert len(listings) == 1
+        assert listings[0]["address"] == "New Street 1"
+        assert listings[0]["asking_price"] == 2500000
+        assert listings[0]["housing_type"] == "Bostadsrätt"
+        assert listings[0]["published_at"] == "2024-01-09"
+        assert listings[0]["new_construction"] is True
 
     @patch("pyhemnet.hemnet.HemnetScraper._make_request")
     def test_error_handling_invalid_json(self, mock_request, scraper):
