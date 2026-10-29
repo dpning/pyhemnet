@@ -1,6 +1,6 @@
 """Tests for Hemnet scraper"""
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -130,6 +130,43 @@ class TestHemnetScraper:
         assert listing == 150
         assert sold == 75
         mock_request.assert_called_once()
+
+    @patch("pyhemnet.hemnet.HemnetScraper._make_request")
+    def test_get_summary_with_rendered_page_totals(self, mock_request, scraper):
+        mock_request.side_effect = [
+            {"__hemnet_page_type__": "listings", "__hemnet_page_total__": 1649},
+            {"__hemnet_page_type__": "sold", "__hemnet_page_total__": 21159},
+        ]
+
+        assert scraper.get_summary(location_id="17932") == (1649, 21159)
+        assert mock_request.call_count == 2
+        assert (
+            mock_request.call_args_list[1]
+            .args[0]
+            .startswith("https://www.hemnet.se/salda/bostader?")
+        )
+
+    @pytest.mark.parametrize(
+        ("heading", "page_type", "total"),
+        [
+            (
+                "1\u00a0649 bostäder till salu & kommande – Helsingborgs kommun",
+                "listings",
+                1649,
+            ),
+            ("21\u00a0159 sålda bostäder – Helsingborgs kommun", "sold", 21159),
+        ],
+    )
+    def test_make_request_parses_rendered_page_total(
+        self, scraper, heading, page_type, total
+    ):
+        response = MagicMock()
+        response.text = f"<html><h1>{heading}</h1></html>"
+        with patch.object(scraper.scraper, "get", return_value=response):
+            assert scraper._make_request("https://www.hemnet.se/example") == {
+                "__hemnet_page_type__": page_type,
+                "__hemnet_page_total__": total,
+            }
 
     @patch("pyhemnet.hemnet.HemnetScraper._make_request")
     def test_get_summary_with_filters(self, mock_request, scraper, mock_summary_json):

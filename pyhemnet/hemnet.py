@@ -111,6 +111,23 @@ class HemnetScraper:
         script_tag = soup.find("script", id="__NEXT_DATA__")
 
         if not script_tag or not script_tag.string:
+            heading = soup.find("h1")
+            heading_text = heading.get_text(" ", strip=True) if heading else ""
+            match = re.match(
+                r"([\d][\d\s.,\u00a0\u202f]*)\s+(bostäder till salu|sålda bostäder)\b",
+                heading_text,
+                re.IGNORECASE,
+            )
+            if match:
+                page_type = (
+                    "listings"
+                    if match.group(2).lower() == "bostäder till salu"
+                    else "sold"
+                )
+                return {
+                    "__hemnet_page_type__": page_type,
+                    "__hemnet_page_total__": self._extract_int(match.group(1)),
+                }
             raise ValueError(f"Could not find JSON data in page: {url}")
 
         try:
@@ -340,6 +357,17 @@ class HemnetScraper:
         try:
             url = self._build_url("listings", location_id, item_types)
             json_data = self._make_request(url)
+            if "__hemnet_page_type__" in json_data:
+                if json_data["__hemnet_page_type__"] != "listings":
+                    raise ValueError("Unexpected page type while reading listing total")
+                sold_url = self._build_url("sold", location_id, item_types)
+                sold_data = self._make_request(sold_url)
+                if sold_data.get("__hemnet_page_type__") != "sold":
+                    raise ValueError("Could not read sold total from Hemnet page")
+                return (
+                    json_data["__hemnet_page_total__"],
+                    sold_data["__hemnet_page_total__"],
+                )
             listing, sold = self._parse_summary(json_data)
             return listing, sold
         except ValueError as e:
